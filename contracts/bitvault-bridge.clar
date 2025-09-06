@@ -246,3 +246,124 @@
     )
   )
 )
+
+;; Execute Withdrawal to Bitcoin Network
+(define-public (withdraw
+    (amount uint)
+    (btc-recipient (buff 34))
+  )
+  (let ((current-balance (get-bridge-balance tx-sender)))
+    (asserts! (not (var-get bridge-paused)) (err ERROR-BRIDGE-PAUSED))
+    (asserts! (>= current-balance amount) (err ERROR-INSUFFICIENT-BALANCE))
+    (asserts! (validate-deposit-amount amount) (err ERROR-INVALID-AMOUNT))
+
+    (map-set bridge-balances tx-sender (- current-balance amount))
+
+    (print {
+      type: "withdraw",
+      sender: tx-sender,
+      amount: amount,
+      btc-recipient: btc-recipient,
+      timestamp: stacks-block-height,
+    })
+
+    (var-set total-bridged-amount (- (var-get total-bridged-amount) amount))
+    (ok true)
+  )
+)
+
+;; Emergency Fund Recovery Mechanism
+(define-public (emergency-withdraw
+    (amount uint)
+    (recipient principal)
+  )
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-DEPLOYER) (err ERROR-NOT-AUTHORIZED))
+    (asserts! (>= (var-get total-bridged-amount) amount)
+      (err ERROR-INSUFFICIENT-BALANCE)
+    )
+    (asserts! (is-valid-principal recipient)
+      (err ERROR-INVALID-RECIPIENT-ADDRESS)
+    )
+
+    (let (
+        (current-balance (default-to u0 (map-get? bridge-balances recipient)))
+        (new-balance (+ current-balance amount))
+      )
+      (asserts! (> new-balance current-balance) (err ERROR-INVALID-AMOUNT))
+      (map-set bridge-balances recipient new-balance)
+      (ok true)
+    )
+  )
+)
+
+;; QUERY & VALIDATION FUNCTIONS
+
+;; Retrieve Deposit Transaction Details
+(define-read-only (get-deposit (tx-hash (buff 32)))
+  (map-get? deposits { tx-hash: tx-hash })
+)
+
+;; Check Bridge Operational Status
+(define-read-only (get-bridge-status)
+  (var-get bridge-paused)
+)
+
+;; Verify Validator Authorization Status
+(define-read-only (get-validator-status (validator principal))
+  (default-to false (map-get? validators validator))
+)
+
+;; Query User Bridge Balance
+(define-read-only (get-bridge-balance (user principal))
+  (default-to u0 (map-get? bridge-balances user))
+)
+
+;; Validate Principal Address Format
+(define-read-only (is-valid-principal (address principal))
+  (and
+    (not (is-eq address CONTRACT-DEPLOYER))
+    (not (is-eq address (as-contract tx-sender)))
+  )
+)
+
+;; Validate Bitcoin Address Structure
+(define-read-only (is-valid-btc-address (btc-addr (buff 33)))
+  (and
+    (is-eq (len btc-addr) u33)
+    (not (is-eq btc-addr
+      0x000000000000000000000000000000000000000000000000000000000000000000
+    ))
+    true
+  )
+)
+
+;; Validate Transaction Hash Format
+(define-read-only (is-valid-tx-hash (tx-hash (buff 32)))
+  (and
+    (is-eq (len tx-hash) u32)
+    (not (is-eq tx-hash
+      0x0000000000000000000000000000000000000000000000000000000000000000
+    ))
+    true
+  )
+)
+
+;; Validate Cryptographic Signature
+(define-read-only (is-valid-signature (signature (buff 65)))
+  (and
+    (is-eq (len signature) u65)
+    (not (is-eq signature
+      0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+    ))
+    true
+  )
+)
+
+;; Validate Deposit Amount Parameters
+(define-read-only (validate-deposit-amount (amount uint))
+  (and
+    (>= amount MIN-DEPOSIT-AMOUNT)
+    (<= amount MAX-DEPOSIT-AMOUNT)
+  )
+)
